@@ -1,0 +1,2 @@
+Start Time,End Time,Total Runtime (seconds),Average CPU Usage (%),Peak CPU Usage (%),Average RAM Usage (%),Peak RAM Usage (%),Total Alerts Generated,Total Samples Collected
+2026-06-17T15:22:43.228103,2026-06-17T15:23:20.632755,37.4,6.3,11.2,78.9,79.5,0,5
