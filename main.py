@@ -88,6 +88,7 @@ def display_metrics(metrics: dict) -> None:
     """
     try:
         print("\n--- System Metrics ---")
+        print(f"Run Number           : {metrics.get('run_number')}")
         print(f"Timestamp           : {metrics.get('timestamp')}")
         print(f"CPU Usage            : {metrics.get('cpu_usage_percent')}%")
         print(f"RAM Usage            : {metrics.get('ram_usage_percent')}%")
@@ -314,6 +315,11 @@ def main() -> None:
         5. On 'stop', cleanly shut everything down and exit.
     """
     display_welcome_banner()
+
+    # Determine and announce this execution's run number immediately, before
+    # waiting for 'start'. The number is persisted by config.py so it keeps
+    # incrementing across separate program executions.
+    config.initialize_run_number()
 
     # Step 1: Wait for 'start'. Monitoring must not begin until the user
     # explicitly types 'start'.

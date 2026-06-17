@@ -49,8 +49,12 @@ BASE_DIR: str = os.path.dirname(os.path.abspath(__file__))
 METRICS_CSV_PATH: str = os.path.join(BASE_DIR, "system_metrics.csv")
 PROCESSES_CSV_PATH: str = os.path.join(BASE_DIR, "system_processes.csv")
 REPORT_CSV_PATH: str = os.path.join(BASE_DIR, "system_report.csv")
+RUN_COUNTER_PATH: str = os.path.join(BASE_DIR, "run_count.txt")
 
+# "run_number" is included first in both CSVs so every row is traceable
+# back to the specific program execution ("run") that produced it.
 METRICS_CSV_HEADERS: List[str] = [
+    "run_number",
     "timestamp",
     "cpu_usage_percent",
     "ram_usage_percent",
@@ -62,6 +66,7 @@ METRICS_CSV_HEADERS: List[str] = [
 ]
 
 PROCESSES_CSV_HEADERS: List[str] = [
+    "run_number",
     "timestamp",
     "process_name",
     "pid",
@@ -82,6 +87,12 @@ start_time: Optional[datetime] = None
 end_time: Optional[datetime] = None
 alert_count: int = 0
 
+# Tracks which "run" (program execution) this is. Persisted to disk
+# (RUN_COUNTER_PATH) so it keeps incrementing across separate executions
+# of the program, not just within a single session. Set by
+# `initialize_run_number()`, normally called once at startup.
+current_run_number: int = 0
+
 # Alert thresholds (percentages for cpu/ram, bytes/sec for network).
 # These can be overridden by the importing module before monitoring starts.
 cpu_threshold: float = 85.0
@@ -101,8 +112,54 @@ _last_net_sample_time: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
-# Individual metric collectors
+# Run number tracking (persists across separate program executions)
 # ---------------------------------------------------------------------------
+def initialize_run_number() -> int:
+    """
+    Determine the current run number for this program execution and persist
+    the incremented value to disk so the *next* execution knows to use the
+    following number.
+
+    On first-ever execution (no counter file present), this run is "1".
+    Each subsequent execution increments by one, regardless of how many
+    monitoring cycles occurred in prior runs.
+
+    Updates the global `current_run_number` and prints/logs
+    "This is run {n}" immediately.
+
+    Returns:
+        int: The run number assigned to this execution.
+    """
+    global current_run_number
+
+    try:
+        if os.path.isfile(RUN_COUNTER_PATH):
+            with open(RUN_COUNTER_PATH, "r", encoding="utf-8") as f:
+                contents = f.read().strip()
+                last_run = int(contents) if contents else 0
+        else:
+            last_run = 0
+
+        current_run_number = last_run + 1
+
+        with open(RUN_COUNTER_PATH, "w", encoding="utf-8") as f:
+            f.write(str(current_run_number))
+
+        logger.info("Run number initialized: %d", current_run_number)
+
+    except Exception as exc:
+        # If the counter file is missing, corrupted, or unwritable, fall
+        # back to run 1 rather than crashing startup. The run will simply
+        # not persist across executions until the underlying issue (e.g.
+        # file permissions) is fixed.
+        logger.error("Failed to initialize run number, defaulting to 1: %s", exc)
+        current_run_number = 1
+
+    print(f"This is run {current_run_number}")
+    return current_run_number
+
+
+
 def get_cpu_usage() -> float:
     """
     Return current system-wide CPU utilization as a percentage.
@@ -268,6 +325,7 @@ def collect_system_metrics() -> Dict[str, Any]:
         process_count = get_total_running_processes()
 
         metrics: Dict[str, Any] = {
+            "run_number": current_run_number,
             "timestamp": timestamp,
             "cpu_usage_percent": cpu,
             "ram_usage_percent": ram,
@@ -289,6 +347,7 @@ def collect_system_metrics() -> Dict[str, Any]:
         # Return a safe, fully-keyed fallback so downstream code (CSV
         # writers, dashboards) never has to special-case a missing key.
         return {
+            "run_number": current_run_number,
             "timestamp": datetime.now().isoformat(),
             "cpu_usage_percent": 0.0,
             "ram_usage_percent": 0.0,
@@ -343,6 +402,7 @@ def collect_top_processes(limit: int = 5) -> List[Dict[str, Any]]:
                 ram_percent = proc.memory_percent()
 
                 processes.append({
+                    "run_number": current_run_number,
                     "timestamp": timestamp,
                     "process_name": name,
                     "pid": pid,
@@ -556,7 +616,21 @@ def generate_summary_report() -> Optional[str]:
             total_runtime_seconds = 0.0
             start_time_str = "N/A"
 
+        if disk_values := [m.get("disk_usage_percent", 0.0) for m in system_metrics_data]:
+            avg_disk = sum(disk_values) / len(disk_values)
+            peak_disk = max(disk_values)
+        else:
+            avg_disk = peak_disk = 0.0
+
+        # Break down alerts by type (CPU / RAM / NETWORK) for a more
+        # informative end-of-run summary.
+        alert_type_counts: Dict[str, int] = {}
+        for alert in alerts_generated:
+            alert_type = alert.get("type", "UNKNOWN")
+            alert_type_counts[alert_type] = alert_type_counts.get(alert_type, 0) + 1
+
         report_row = {
+            "Run Number": current_run_number,
             "Start Time": start_time_str,
             "End Time": end_time.isoformat(),
             "Total Runtime (seconds)": round(total_runtime_seconds, 2),
@@ -564,7 +638,12 @@ def generate_summary_report() -> Optional[str]:
             "Peak CPU Usage (%)": round(peak_cpu, 2),
             "Average RAM Usage (%)": round(avg_ram, 2),
             "Peak RAM Usage (%)": round(peak_ram, 2),
+            "Average Disk Usage (%)": round(avg_disk, 2),
+            "Peak Disk Usage (%)": round(peak_disk, 2),
             "Total Alerts Generated": alert_count,
+            "CPU Alerts": alert_type_counts.get("CPU", 0),
+            "RAM Alerts": alert_type_counts.get("RAM", 0),
+            "Network Alerts": alert_type_counts.get("NETWORK", 0),
             "Total Samples Collected": len(system_metrics_data),
         }
 
@@ -578,6 +657,29 @@ def generate_summary_report() -> Optional[str]:
             writer.writerow(report_row)
 
         logger.info("Summary report generated at: %s", REPORT_CSV_PATH)
+
+        # Also print a human-readable summary directly to the terminal,
+        # so the user sees the full run's results immediately on stop,
+        # without needing to open the CSV file.
+        print("\n" + "=" * 60)
+        print(f"SUMMARY FOR RUN {current_run_number}")
+        print("=" * 60)
+        print(f"Start Time            : {start_time_str}")
+        print(f"End Time              : {end_time.isoformat()}")
+        print(f"Total Runtime         : {round(total_runtime_seconds, 2)} sec")
+        print(f"Average CPU Usage     : {round(avg_cpu, 2)}%")
+        print(f"Peak CPU Usage        : {round(peak_cpu, 2)}%")
+        print(f"Average RAM Usage     : {round(avg_ram, 2)}%")
+        print(f"Peak RAM Usage        : {round(peak_ram, 2)}%")
+        print(f"Average Disk Usage    : {round(avg_disk, 2)}%")
+        print(f"Peak Disk Usage       : {round(peak_disk, 2)}%")
+        print(f"Total Alerts Generated: {alert_count} "
+              f"(CPU={alert_type_counts.get('CPU', 0)}, "
+              f"RAM={alert_type_counts.get('RAM', 0)}, "
+              f"Network={alert_type_counts.get('NETWORK', 0)})")
+        print(f"Total Samples Collected: {len(system_metrics_data)}")
+        print("=" * 60)
+
         return REPORT_CSV_PATH
 
     except Exception as exc:
@@ -608,7 +710,7 @@ def run_monitoring_cycle() -> Dict[str, Any]:
                 "alerts": <list of dicts>,
             }
     """
-    global monitoring_active, start_time
+    global monitoring_active, start_time, current_run_number
 
     try:
         if not monitoring_active:
@@ -616,6 +718,13 @@ def run_monitoring_cycle() -> Dict[str, Any]:
 
         if start_time is None:
             start_time = datetime.now()
+
+        if current_run_number == 0:
+            # Defensive fallback: main.py is expected to call
+            # initialize_run_number() once at startup before monitoring
+            # begins, but if a cycle runs without that having happened,
+            # initialize it here so run_number is never left at 0.
+            initialize_run_number()
 
         metrics = collect_system_metrics()
         processes = collect_top_processes(limit=5)
@@ -662,6 +771,7 @@ if __name__ == "__main__":
     # Allows quick manual testing of this module in isolation, e.g.:
     #     python config.py
     logger.info("Running config.py in standalone test mode...")
+    initialize_run_number()
     result = run_monitoring_cycle()
     print(result)
     stop_monitoring()
