@@ -168,13 +168,14 @@ def persist_cycle_data(metrics: dict, processes: list) -> None:
             network_received=metrics.get("network_bytes_received", 0.0),
             system_uptime=metrics.get("system_uptime_seconds", 0.0),
             running_processes=metrics.get("total_running_processes", 0),
+            run_number=metrics.get("run_number", config.current_run_number),
         )
     except Exception as exc:
         logger.error("Failed to persist system metric to database: %s", exc)
 
     try:
         if processes:
-            database.save_system_processes_bulk(processes)
+            database.save_system_processes_bulk(processes, run_number=config.current_run_number)
     except Exception as exc:
         logger.error("Failed to persist processes to database: %s", exc)
 
@@ -244,8 +245,9 @@ def start_monitoring() -> threading.Thread:
         _current_test_run_id = database.save_test_run(
             start_time=config.start_time,
             total_alerts=0,
+            run_number=config.current_run_number,
         )
-        logger.info("Created test_run with id=%s", _current_test_run_id)
+        logger.info("Created test_run with id=%s, run_number=%s", _current_test_run_id, config.current_run_number)
 
     except Exception as exc:
         logger.error("Failed during monitoring startup sequence: %s", exc)
@@ -284,6 +286,7 @@ def stop_monitoring_session(monitor_thread: threading.Thread) -> None:
                 end_time=config.end_time,
                 total_alerts=config.alert_count,
                 run_id=_current_test_run_id,
+                run_number=config.current_run_number,
             )
         else:
             # Fallback: if no test_run id was captured at start, save a new
@@ -292,6 +295,7 @@ def stop_monitoring_session(monitor_thread: threading.Thread) -> None:
                 start_time=config.start_time,
                 end_time=config.end_time,
                 total_alerts=config.alert_count,
+                run_number=config.current_run_number,
             )
 
         config.generate_summary_report()

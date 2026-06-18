@@ -32,6 +32,19 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
+# database.py is imported so that alerts and run summaries can be persisted
+# to SQLite directly from the alert engine / summary generator, ensuring
+# api.py (running in any process) can always serve this data from the DB.
+# The import is defensive: if database.py or its dependencies (SQLAlchemy)
+# are unavailable, config.py still works standalone (CSV output and
+# in-memory state are unaffected) - only DB persistence is skipped.
+try:
+    import database as _database
+    _DATABASE_AVAILABLE = True
+except Exception as _db_import_exc:  # pragma: no cover - environment-dependent
+    _database = None
+    _DATABASE_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
@@ -40,6 +53,12 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("config")
+
+if not _DATABASE_AVAILABLE:
+    logger.warning(
+        "database.py could not be imported; alerts and run summaries will "
+        "only be available via CSV/in-memory state, not the database."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,9 +114,9 @@ current_run_number: int = 0
 
 # Alert thresholds (percentages for cpu/ram, bytes/sec for network).
 # These can be overridden by the importing module before monitoring starts.
-cpu_threshold: float = 90.0
-ram_threshold: float = 90.0
-network_threshold: float = 100 * 1024 *1024 #100 Ms per sec
+cpu_threshold: float = 85.0
+ram_threshold: float = 85.0
+network_threshold: float = 5_000_000  # bytes/sec (~5 MB/s), adjustable
 
 # In-memory collections of everything gathered during the session.
 system_metrics_data: List[Dict[str, Any]] = []
@@ -560,6 +579,20 @@ def check_alerts(metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
                     alert["type"], alert["value"], alert["threshold"],
                 )
 
+                if _DATABASE_AVAILABLE:
+                    try:
+                        _database.save_alert(
+                            alert_type=alert["type"],
+                            value=alert["value"],
+                            threshold=alert["threshold"],
+                            run_number=current_run_number,
+                        )
+                    except Exception as db_exc:
+                        # A database hiccup must never break the alert
+                        # engine itself - the CSV/in-memory record above
+                        # has already succeeded regardless.
+                        logger.error("Failed to persist alert to database: %s", db_exc)
+
         return new_alerts
 
     except Exception as exc:
@@ -679,6 +712,29 @@ def generate_summary_report() -> Optional[str]:
               f"Network={alert_type_counts.get('NETWORK', 0)})")
         print(f"Total Samples Collected: {len(system_metrics_data)}")
         print("=" * 60)
+
+        if _DATABASE_AVAILABLE:
+            try:
+                _database.save_run_summary(
+                    run_number=current_run_number,
+                    total_runtime_seconds=round(total_runtime_seconds, 2),
+                    average_cpu_usage=round(avg_cpu, 2),
+                    peak_cpu_usage=round(peak_cpu, 2),
+                    average_ram_usage=round(avg_ram, 2),
+                    peak_ram_usage=round(peak_ram, 2),
+                    average_disk_usage=round(avg_disk, 2),
+                    peak_disk_usage=round(peak_disk, 2),
+                    cpu_alerts=alert_type_counts.get("CPU", 0),
+                    ram_alerts=alert_type_counts.get("RAM", 0),
+                    network_alerts=alert_type_counts.get("NETWORK", 0),
+                    total_samples_collected=len(system_metrics_data),
+                    total_alerts=alert_count,
+                    end_time=end_time,
+                )
+            except Exception as db_exc:
+                # A database hiccup must never prevent the CSV report (the
+                # primary deliverable of this function) from being returned.
+                logger.error("Failed to persist run summary to database: %s", db_exc)
 
         return REPORT_CSV_PATH
 
