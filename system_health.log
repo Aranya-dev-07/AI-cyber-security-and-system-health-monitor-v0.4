@@ -1,0 +1,5 @@
+2026-06-18 21:05:27,079 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-18 21:05:27,080 [INFO] __main__: API server thread launched.
+2026-06-18 21:05:27,195 [INFO] __main__: Starting FastAPI server on http://127.0.0.1:8000
+2026-06-18 21:05:27,278 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-18 21:05:27,279 [INFO] api: API startup complete: database initialized.
