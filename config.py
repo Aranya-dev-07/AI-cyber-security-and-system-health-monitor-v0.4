@@ -95,9 +95,9 @@ current_run_number: int = 0
 
 # Alert thresholds (percentages for cpu/ram, bytes/sec for network).
 # These can be overridden by the importing module before monitoring starts.
-cpu_threshold: float = 85.0
-ram_threshold: float = 85.0
-network_threshold: float = 5_000_000  # bytes/sec (~5 MB/s), adjustable
+cpu_threshold: float = 90.0
+ram_threshold: float = 90.0
+network_threshold: float = 100 * 1024 *1024 #100 Ms per sec
 
 # In-memory collections of everything gathered during the session.
 system_metrics_data: List[Dict[str, Any]] = []
