@@ -1,494 +1,335 @@
 """
 api.py
 ======
+FastAPI REST interface for the System Health Monitor and Cybersecurity
+Monitoring Platform.
 
-FastAPI backend for the System Health Monitor project.
+Exposes monitoring data collected by ``config.py`` and persisted by
+``database.py`` over HTTP, with interactive Swagger (``/docs``) and Redoc
+(``/redoc``) documentation enabled by default.
 
-This module exposes monitoring data persisted in SQLite (via database.py)
-over a REST API, so a frontend dashboard or other client can query system
-health information.
+ARCHITECTURE NOTE
+------------------
+``api.py`` imports from both ``config.py`` and ``database.py``:
 
-Design note (important): every endpoint here is backed exclusively by the
-database, not by config.py's in-memory state. This is deliberate. main.py
-(which runs the monitoring loop) and api.py (typically served via
-`uvicorn api:app --reload`) usually run as two separate OS processes, which
-do NOT share Python memory. Reading from config.py's in-memory variables
-inside api.py only works if both happen to run in the same process - in
-the far more common case of two separate processes, those variables would
-simply be empty/default in the API process. Routing everything through the
-database avoids this entirely and makes the API correct regardless of how
-many monitoring processes have run, or whether one is currently running.
+    config.py  <-- database.py  <-- api.py  <-- main.py
 
-Run with:
-    uvicorn api:app --reload
+DATA SOURCE NOTE (per project decision)
+-----------------------------------------
+Endpoints are intentionally split between two data sources:
 
-Author: System Health Monitor Project
+    * ``/metrics`` and ``/processes`` read the shared **in-memory** state
+      (``config.metrics_data`` / ``config.process_data``) for the lowest
+      possible latency on "what is happening right now" queries.
+    * ``/runs`` reads from **SQLite** via ``database.get_run_history()``,
+      since run history is inherently a durable, historical record.
+    * ``/summary`` has no dedicated database table (only a CSV report is
+      ever produced), so it is computed live via
+      ``config.generate_run_summary()`` against the current in-memory
+      ``metrics_data`` / ``run_start_time`` / ``run_end_time`` /
+      ``alert_count``.
+
+This file never duplicates SQL or schema logic - all database access goes
+through the functions already defined in ``database.py``.
+
+NO MONITORING CONTROL ENDPOINTS
+----------------------------------
+This API is read-only by design (per the locked endpoint list:
+``/health``, ``/metrics``, ``/processes``, ``/runs``, ``/summary``).
+Starting and stopping the monitoring loop is controlled exclusively by
+``main.py`` calling ``start_monitoring()`` / ``stop_monitoring()``
+directly - there are no ``POST /monitoring/start`` or
+``POST /monitoring/stop`` routes here. If remote start/stop control is
+ever needed, two additional endpoints can be added following the same
+pattern used below.
 """
 
+from __future__ import annotations
+
 import logging
-from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
+import config
 import database
 
-# ---------------------------------------------------------------------------
-# Logging configuration
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("api")
-
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# FastAPI app initialization
+# FastAPI application
 # ---------------------------------------------------------------------------
 app = FastAPI(
-    title="System Health Monitor API",
-    description="API Backend for AI-Based System Health Monitoring Platform",
-    version="1.0",
+    title="System Health Monitor & Cybersecurity Monitoring Platform",
+    description=(
+        "REST API exposing live and historical CPU, RAM, disk, network, "
+        "and process monitoring data, plus run history and run summaries."
+    ),
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+# Permissive CORS so any frontend (dev or otherwise) can consume this API.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
 # ---------------------------------------------------------------------------
 # Pydantic response models
 # ---------------------------------------------------------------------------
-class RootResponse(BaseModel):
-    """Response model for the root health-check endpoint."""
-    message: str
+class HealthResponse(BaseModel):
+    """Response model for the liveness check endpoint."""
+
+    status: str = Field(..., description="Service health status.", examples=["healthy"])
 
 
-class StatusResponse(BaseModel):
-    """
-    Response model for /status - current monitoring state, derived from
-    the database (the most recent test_run row).
-    """
-    monitoring_active: bool
-    current_run_number: Optional[int] = None
-    alert_count: int
+class MetricResponse(BaseModel):
+    """Response model for a single system metric snapshot."""
+
+    timestamp: str = Field(..., description="ISO-8601 timestamp of the snapshot.")
+    cpu_percent: float = Field(..., description="CPU utilisation, in percent.")
+    ram_percent: float = Field(..., description="RAM utilisation, in percent.")
+    disk_percent: float = Field(..., description="Disk utilisation, in percent.")
+    net_sent_mb: float = Field(..., description="MB sent since the previous cycle.")
+    net_recv_mb: float = Field(..., description="MB received since the previous cycle.")
 
 
-class SystemMetricResponse(BaseModel):
-    """Response model for a single system_metrics row."""
-    model_config = ConfigDict(from_attributes=True)
+class ProcessResponse(BaseModel):
+    """Response model for a single process snapshot entry."""
 
-    id: int
-    run_number: Optional[int] = None
-    timestamp: datetime
-    cpu_usage: float
-    ram_usage: float
-    disk_usage: float
-    network_sent: float
-    network_received: float
-    system_uptime: float
-    running_processes: int
+    timestamp: str = Field(..., description="ISO-8601 timestamp of the snapshot.")
+    pid: int = Field(..., description="Process ID.")
+    name: str = Field(..., description="Process name.")
+    cpu_percent: float = Field(..., description="Process CPU utilisation, in percent.")
+    memory_percent: float = Field(..., description="Process memory utilisation, in percent.")
+    status: str = Field(..., description="Process status (e.g. 'running', 'sleeping').")
 
 
-class SystemProcessResponse(BaseModel):
-    """Response model for a single system_processes row."""
-    model_config = ConfigDict(from_attributes=True)
+class RunHistoryResponse(BaseModel):
+    """Response model for a single historical monitoring run."""
 
-    id: int
-    run_number: Optional[int] = None
-    timestamp: datetime
-    process_name: str
-    pid: Optional[int] = None
-    cpu_usage: float
-    ram_usage: float
-
-
-class AlertResponse(BaseModel):
-    """Response model for a single alert row."""
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    run_number: Optional[int] = None
-    timestamp: datetime
-    alert_type: str
-    value: float
-    threshold: float
-
-
-class TestRunResponse(BaseModel):
-    """
-    Response model for a single test_run row (a historical monitoring
-    session), including its summary statistics once the run has completed.
-    """
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    run_number: Optional[int] = None
-    start_time: datetime
-    end_time: Optional[datetime] = None
-    total_alerts: int
-    total_runtime_seconds: Optional[float] = None
-    average_cpu_usage: Optional[float] = None
-    peak_cpu_usage: Optional[float] = None
-    average_ram_usage: Optional[float] = None
-    peak_ram_usage: Optional[float] = None
-    average_disk_usage: Optional[float] = None
-    peak_disk_usage: Optional[float] = None
-    cpu_alerts: Optional[int] = None
-    ram_alerts: Optional[int] = None
-    network_alerts: Optional[int] = None
-    total_samples_collected: Optional[int] = None
+    id: int = Field(..., description="Unique run identifier.")
+    start_time: str = Field(..., description="ISO-8601 timestamp the run started.")
+    end_time: Optional[str] = Field(None, description="ISO-8601 timestamp the run ended.")
+    duration_seconds: Optional[float] = Field(None, description="Run duration, in seconds.")
+    alert_count: int = Field(..., description="Total alerts raised during the run.")
 
 
 class RunSummaryResponse(BaseModel):
-    """
-    Response model for /report and /runs/{run_number}/summary - a
-    comprehensive, human-friendly summary of a single completed (or
-    in-progress) monitoring run.
-    """
-    run_number: Optional[int] = None
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    total_runtime_seconds: Optional[float] = None
-    average_cpu_usage: Optional[float] = None
-    peak_cpu_usage: Optional[float] = None
-    average_ram_usage: Optional[float] = None
-    peak_ram_usage: Optional[float] = None
-    average_disk_usage: Optional[float] = None
-    peak_disk_usage: Optional[float] = None
-    total_alerts_generated: int = 0
-    cpu_alerts: int = 0
-    ram_alerts: int = 0
-    network_alerts: int = 0
-    total_samples_collected: int = 0
+    """Response model for the current/most recent run summary."""
+
+    run_id: int = Field(..., description="Identifier of the run this summary covers.")
+    start_time: str = Field(..., description="ISO-8601 timestamp the run started.")
+    end_time: str = Field(..., description="ISO-8601 timestamp the run ended (or 'now').")
+    duration_sec: float = Field(..., description="Run duration, in seconds.")
+    avg_cpu: float = Field(..., description="Average CPU utilisation across the run.")
+    avg_ram: float = Field(..., description="Average RAM utilisation across the run.")
+    avg_disk: float = Field(..., description="Average disk utilisation across the run.")
+    total_alerts: int = Field(..., description="Total alerts raised during the run.")
 
 
 class ErrorResponse(BaseModel):
-    """Generic error response model."""
-    detail: str
+    """Standard error response shape for documented error cases."""
+
+    detail: str = Field(..., description="Human-readable error message.")
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-def _build_run_summary_response(test_run: database.TestRun) -> RunSummaryResponse:
-    """
-    Convert a TestRun ORM row into a RunSummaryResponse, filling in zeros
-    for any statistics not yet computed (e.g. the run is still in progress).
-
-    Args:
-        test_run (database.TestRun): The ORM row to convert.
-
-    Returns:
-        RunSummaryResponse: A clean, fully-populated response model.
-    """
-    return RunSummaryResponse(
-        run_number=test_run.run_number,
-        start_time=test_run.start_time,
-        end_time=test_run.end_time,
-        total_runtime_seconds=test_run.total_runtime_seconds,
-        average_cpu_usage=test_run.average_cpu_usage,
-        peak_cpu_usage=test_run.peak_cpu_usage,
-        average_ram_usage=test_run.average_ram_usage,
-        peak_ram_usage=test_run.peak_ram_usage,
-        average_disk_usage=test_run.average_disk_usage,
-        peak_disk_usage=test_run.peak_disk_usage,
-        total_alerts_generated=test_run.total_alerts or 0,
-        cpu_alerts=test_run.cpu_alerts or 0,
-        ram_alerts=test_run.ram_alerts or 0,
-        network_alerts=test_run.network_alerts or 0,
-        total_samples_collected=test_run.total_samples_collected or 0,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Endpoints - Health
-# ---------------------------------------------------------------------------
-@app.get("/", response_model=RootResponse, tags=["Health"])
-def read_root() -> RootResponse:
-    """
-    Root endpoint. Confirms the API is running.
-
-    Returns:
-        RootResponse: A simple confirmation message.
-    """
-    return RootResponse(message="System Health Monitor API Running")
-
-
-# ---------------------------------------------------------------------------
-# Endpoints - Monitoring
-# ---------------------------------------------------------------------------
-@app.get("/status", response_model=StatusResponse, tags=["Monitoring"])
-def get_status() -> StatusResponse:
-    """
-    Return the current monitoring status, derived from the database.
-
-    `monitoring_active` is inferred from the most recent test_run row: a
-    run is considered active if it has a start_time but no end_time yet.
-    `alert_count` reflects the total alerts recorded for that most recent
-    run.
-
-    Returns:
-        StatusResponse: Current monitoring state.
-
-    Raises:
-        HTTPException: 500 if the status cannot be read.
-    """
-    try:
-        recent_runs = database.get_test_runs(limit=1)
-        if not recent_runs:
-            return StatusResponse(monitoring_active=False, current_run_number=None, alert_count=0)
-
-        latest_run = recent_runs[0]
-        is_active = latest_run.start_time is not None and latest_run.end_time is None
-
-        return StatusResponse(
-            monitoring_active=is_active,
-            current_run_number=latest_run.run_number,
-            alert_count=latest_run.total_alerts or 0,
-        )
-    except Exception as exc:
-        logger.error("Failed to fetch status: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve monitoring status.")
-
-
-@app.get("/metrics", response_model=List[SystemMetricResponse], tags=["Monitoring"])
-def get_metrics(
-    limit: int = Query(default=10, ge=1, le=1000),
-    run_number: Optional[int] = Query(default=None, description="Filter to a specific run."),
-) -> List[SystemMetricResponse]:
-    """
-    Return the most recent system metrics from the database, newest first.
-
-    Args:
-        limit (int): Maximum number of records to return. Defaults to 10.
-        run_number (Optional[int]): If provided, only return metrics from
-                                     this specific run.
-
-    Returns:
-        List[SystemMetricResponse]: Most recent metric snapshots.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        metrics = database.get_latest_metrics(limit=limit, run_number=run_number)
-        return [SystemMetricResponse.model_validate(m) for m in metrics]
-    except Exception as exc:
-        logger.error("Failed to fetch metrics: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve system metrics.")
-
-
-@app.get("/metrics/history", response_model=List[SystemMetricResponse], tags=["Monitoring"])
-def get_metrics_history(
-    run_number: Optional[int] = Query(default=None, description="Filter to a specific run. Omit for all runs."),
-    limit: int = Query(default=500, ge=1, le=5000),
-) -> List[SystemMetricResponse]:
-    """
-    Return historical system metrics in chronological order (oldest first) -
-    suitable for plotting CPU/RAM/disk trends over time.
-
-    Args:
-        run_number (Optional[int]): If provided, restrict history to this
-                                     run. If omitted, returns history across
-                                     all runs.
-        limit (int): Maximum number of records to return. Defaults to 500.
-
-    Returns:
-        List[SystemMetricResponse]: Metric snapshots in chronological order.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        metrics = database.get_metrics_history(run_number=run_number, limit=limit)
-        return [SystemMetricResponse.model_validate(m) for m in metrics]
-    except Exception as exc:
-        logger.error("Failed to fetch metrics history: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve metrics history.")
-
-
-@app.get("/processes", response_model=List[SystemProcessResponse], tags=["Monitoring"])
-def get_processes(
-    limit: int = Query(default=10, ge=1, le=1000),
-    run_number: Optional[int] = Query(default=None, description="Filter to a specific run."),
-) -> List[SystemProcessResponse]:
-    """
-    Return the most recent top-process records from the database, newest
-    first.
-
-    Args:
-        limit (int): Maximum number of records to return. Defaults to 10.
-        run_number (Optional[int]): If provided, only return processes from
-                                     this specific run.
-
-    Returns:
-        List[SystemProcessResponse]: Most recent process snapshots.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        processes = database.get_latest_processes(limit=limit, run_number=run_number)
-        return [SystemProcessResponse.model_validate(p) for p in processes]
-    except Exception as exc:
-        logger.error("Failed to fetch processes: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve process records.")
-
-
-@app.get("/processes/history", response_model=List[SystemProcessResponse], tags=["Monitoring"])
-def get_processes_history(
-    run_number: Optional[int] = Query(default=None, description="Filter to a specific run. Omit for all runs."),
-    limit: int = Query(default=500, ge=1, le=5000),
-) -> List[SystemProcessResponse]:
-    """
-    Return historical process records in chronological order (oldest first).
-
-    Args:
-        run_number (Optional[int]): If provided, restrict history to this
-                                     run. If omitted, returns history across
-                                     all runs.
-        limit (int): Maximum number of records to return. Defaults to 500.
-
-    Returns:
-        List[SystemProcessResponse]: Process snapshots in chronological order.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        processes = database.get_processes_history(run_number=run_number, limit=limit)
-        return [SystemProcessResponse.model_validate(p) for p in processes]
-    except Exception as exc:
-        logger.error("Failed to fetch processes history: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve processes history.")
-
-
-@app.get("/alerts", response_model=List[AlertResponse], tags=["Monitoring"])
-def get_alerts(
-    run_number: Optional[int] = Query(default=None, description="Filter to a specific run. Omit for all runs."),
-    limit: int = Query(default=200, ge=1, le=2000),
-) -> List[AlertResponse]:
-    """
-    Return alerts generated by the alert engine, newest first, sourced
-    directly from the database.
-
-    Args:
-        run_number (Optional[int]): If provided, only return alerts from
-                                     this specific run.
-        limit (int): Maximum number of records to return. Defaults to 200.
-
-    Returns:
-        List[AlertResponse]: Alert records.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        alerts = database.get_alerts(run_number=run_number, limit=limit)
-        return [AlertResponse.model_validate(a) for a in alerts]
-    except Exception as exc:
-        logger.error("Failed to fetch alerts: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve alerts.")
-
-
-# ---------------------------------------------------------------------------
-# Endpoints - Reporting
-# ---------------------------------------------------------------------------
-@app.get("/report", response_model=RunSummaryResponse, tags=["Reporting"])
-def get_report() -> RunSummaryResponse:
-    """
-    Return a comprehensive summary of the most recent monitoring run,
-    sourced from the database (the test_run row with the highest
-    run_number / most recent start_time).
-
-    Returns:
-        RunSummaryResponse: Summary statistics for the most recent run.
-
-    Raises:
-        HTTPException: 404 if no runs exist yet, 500 on database failure.
-    """
-    try:
-        recent_runs = database.get_test_runs(limit=1)
-        if not recent_runs:
-            raise HTTPException(status_code=404, detail="No monitoring runs found yet.")
-
-        return _build_run_summary_response(recent_runs[0])
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Failed to generate report: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to generate report.")
-
-
-@app.get("/runs/{run_number}/summary", response_model=RunSummaryResponse, tags=["Reporting"])
-def get_run_summary(run_number: int) -> RunSummaryResponse:
-    """
-    Return a comprehensive summary for one specific monitoring run,
-    identified by its run_number (e.g. 1, 2, 3...).
-
-    Args:
-        run_number (int): The run number to summarize.
-
-    Returns:
-        RunSummaryResponse: Summary statistics for the requested run.
-
-    Raises:
-        HTTPException: 404 if the run does not exist, 500 on database failure.
-    """
-    try:
-        test_run = database.get_run_summary(run_number)
-        if test_run is None:
-            raise HTTPException(status_code=404, detail=f"Run {run_number} not found.")
-
-        return _build_run_summary_response(test_run)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Failed to fetch run summary for run_number=%s: %s", run_number, exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve run summary.")
-
-
-@app.get("/test-runs", response_model=List[TestRunResponse], tags=["Reporting"])
-def get_test_runs(limit: int = Query(default=20, ge=1, le=500)) -> List[TestRunResponse]:
-    """
-    Return all historical monitoring runs from the database, newest first,
-    including each run's summary statistics where available.
-
-    Args:
-        limit (int): Maximum number of records to return. Defaults to 20.
-
-    Returns:
-        List[TestRunResponse]: Historical test_run records.
-
-    Raises:
-        HTTPException: 500 if the database query fails.
-    """
-    try:
-        runs = database.get_test_runs(limit=limit)
-        return [TestRunResponse.model_validate(r) for r in runs]
-    except Exception as exc:
-        logger.error("Failed to fetch test runs: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to retrieve test runs.")
-
-
-# ---------------------------------------------------------------------------
-# Startup event - ensure database tables exist before serving requests
+# Startup: ensure the database schema exists before serving requests
 # ---------------------------------------------------------------------------
 @app.on_event("startup")
-def on_startup() -> None:
-    """
-    Ensure the database is initialized (tables created) when the API starts.
+async def on_startup() -> None:
+    """Initialize the database schema when the API starts.
+
+    Calling this here (in addition to ``main.py``) makes ``api.py`` safe
+    to run standalone (e.g. via ``uvicorn api:app``) without depending on
+    ``main.py`` having run first.
     """
     try:
         database.initialize_database()
-        logger.info("API startup complete. Database initialized.")
-    except Exception as exc:
-        logger.error("Database initialization failed on startup: %s", exc)
+        logger.info("API startup complete: database initialized.")
+    except Exception:
+        logger.exception("API startup failed during database initialization.")
 
 
 # ---------------------------------------------------------------------------
-# Standalone run support (in addition to `uvicorn api:app --reload`)
+# Endpoints
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import uvicorn
-    logger.info("Starting System Health Monitor API via uvicorn...")
-    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True)
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    tags=["Health"],
+    summary="Liveness check",
+)
+async def get_health() -> HealthResponse:
+    """Return a simple liveness indicator for the API service.
+
+    Returns:
+        ``{"status": "healthy"}`` if the service is up and responding.
+    """
+    return HealthResponse(status="healthy")
+
+
+@app.get(
+    "/metrics",
+    response_model=MetricResponse,
+    tags=["Metrics"],
+    summary="Get the latest system metrics",
+    responses={404: {"model": ErrorResponse, "description": "No metrics collected yet."}},
+)
+async def get_metrics() -> MetricResponse:
+    """Return the most recently collected system metric snapshot.
+
+    Reads directly from the shared in-memory ``config.metrics_data`` list
+    (not the database) so the response reflects the absolute latest
+    collection cycle with no query latency.
+
+    Returns:
+        The most recent :class:`MetricResponse`.
+
+    Raises:
+        HTTPException: 404 if no metrics have been collected yet (i.e. the
+            monitoring loop has not started or has not completed a cycle).
+    """
+    try:
+        with config.data_lock:
+            if not config.metrics_data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No metrics data available yet. Start monitoring first.",
+                )
+            latest = config.metrics_data[-1]
+
+        return MetricResponse(**latest)
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to retrieve latest metrics.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving metrics.",
+        )
+
+
+@app.get(
+    "/processes",
+    response_model=List[ProcessResponse],
+    tags=["Processes"],
+    summary="Get the latest top-process snapshot",
+    responses={404: {"model": ErrorResponse, "description": "No process data collected yet."}},
+)
+async def get_processes() -> List[ProcessResponse]:
+    """Return the most recently collected top-process snapshot.
+
+    Reads directly from the shared in-memory ``config.process_data`` list
+    (not the database) so the response reflects the absolute latest
+    collection cycle with no query latency.
+
+    Returns:
+        A list of :class:`ProcessResponse`, one per top process from the
+        most recent collection cycle (sorted by CPU usage, descending).
+
+    Raises:
+        HTTPException: 404 if no process data has been collected yet.
+    """
+    try:
+        with config.data_lock:
+            if not config.process_data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No process data available yet. Start monitoring first.",
+                )
+            latest_snapshot = config.process_data[-1]
+
+        processes = latest_snapshot.get("processes", [])
+        return [ProcessResponse(**proc) for proc in processes]
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to retrieve latest process data.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving process data.",
+        )
+
+
+@app.get(
+    "/runs",
+    response_model=List[RunHistoryResponse],
+    tags=["Runs"],
+    summary="Get test run history",
+)
+async def get_runs(limit: int = 50) -> List[RunHistoryResponse]:
+    """Return historical monitoring run records from the database.
+
+    Args:
+        limit: Maximum number of runs to return, most recent first.
+            Defaults to ``50``.
+
+    Returns:
+        A list of :class:`RunHistoryResponse`, ordered from most recent to
+        least recent. Returns an empty list if no runs have been recorded.
+    """
+    try:
+        runs = database.get_run_history(limit=limit)
+        return [RunHistoryResponse(**run) for run in runs]
+
+    except Exception:
+        logger.exception("Failed to retrieve run history.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while retrieving run history.",
+        )
+
+
+@app.get(
+    "/summary",
+    response_model=RunSummaryResponse,
+    tags=["Summary"],
+    summary="Get the current/most recent run summary",
+    responses={404: {"model": ErrorResponse, "description": "No run data available yet."}},
+)
+async def get_summary() -> RunSummaryResponse:
+    """Return aggregate statistics for the current (or most recent) run.
+
+    Computed live via ``config.generate_run_summary()`` against the
+    current in-memory ``metrics_data``, ``run_start_time``,
+    ``run_end_time``, and ``alert_count`` - there is no dedicated database
+    table for summaries, only the CSV report written at the end of a run.
+
+    Returns:
+        The computed :class:`RunSummaryResponse`.
+
+    Raises:
+        HTTPException: 404 if no metrics have been collected yet, meaning
+            no summary can be computed.
+    """
+    try:
+        summary = config.generate_run_summary()
+
+        if not summary:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No run summary available yet. Start monitoring first.",
+            )
+
+        return RunSummaryResponse(**summary)
+
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to generate run summary.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while generating the run summary.",
+        )
