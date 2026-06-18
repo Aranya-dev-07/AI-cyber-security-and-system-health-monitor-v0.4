@@ -3,3 +3,24 @@
 2026-06-18 21:05:27,195 [INFO] __main__: Starting FastAPI server on http://127.0.0.1:8000
 2026-06-18 21:05:27,278 [INFO] database: Database initialized successfully at 'system_monitor.db'.
 2026-06-18 21:05:27,279 [INFO] api: API startup complete: database initialized.
+2026-06-18 21:05:39,507 [INFO] database: Inserted test_run row with id=1.
+2026-06-18 21:05:39,508 [INFO] __main__: Monitoring loop started for run_id=1.
+2026-06-18 21:05:39,508 [INFO] __main__: start_monitoring() succeeded; run_id=1.
+2026-06-18 21:05:40,531 [INFO] config: Collected system metrics: CPU=1.7% RAM=81.1% DISK=66.9% NET_SENT=0.000MB NET_RECV=0.000MB
+2026-06-18 21:05:44,062 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:05:45,513 [INFO] config: Collected system metrics: CPU=3.0% RAM=80.3% DISK=66.9% NET_SENT=0.009MB NET_RECV=0.014MB
+2026-06-18 21:05:49,028 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:05:50,540 [INFO] config: Collected system metrics: CPU=7.9% RAM=80.1% DISK=66.9% NET_SENT=0.017MB NET_RECV=0.023MB
+2026-06-18 21:05:54,622 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:05:55,668 [INFO] config: Collected system metrics: CPU=2.4% RAM=80.1% DISK=66.9% NET_SENT=0.027MB NET_RECV=0.014MB
+2026-06-18 21:05:59,496 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:06:00,685 [INFO] config: Collected system metrics: CPU=4.2% RAM=80.0% DISK=66.9% NET_SENT=0.013MB NET_RECV=0.022MB
+2026-06-18 21:06:03,728 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:06:05,679 [INFO] config: Collected system metrics: CPU=2.7% RAM=79.8% DISK=66.9% NET_SENT=0.007MB NET_RECV=0.001MB
+2026-06-18 21:06:08,900 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:06:10,680 [INFO] config: Collected system metrics: CPU=5.8% RAM=79.8% DISK=66.9% NET_SENT=0.006MB NET_RECV=0.001MB
+2026-06-18 21:06:13,997 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-18 21:06:14,013 [INFO] __main__: Monitoring loop exited cleanly for run_id=1.
+2026-06-18 21:06:14,013 [INFO] config: Generated run summary: duration=34.52s avg_cpu=3.96% avg_ram=80.17% avg_disk=66.90% alerts=0
+2026-06-18 21:06:14,026 [INFO] database: Updated test_run id=1 with end_time and final alert_count.
+2026-06-18 21:06:14,027 [INFO] __main__: stop_monitoring() completed for run_id=1.
