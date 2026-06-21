@@ -74,18 +74,101 @@ _current_run_id: int = -1
 API_HOST: str = "127.0.0.1"
 API_PORT: int = 8000
 
-WELCOME_BANNER: str = """
-====================================
-       SYSTEM HEALTH MONITOR
-====================================
-Welcome User!
-
-Type:
-  start -> Begin Monitoring
-  stop  -> Stop Monitoring
-  exit  -> Quit the program
-  quit  -> Quit the program
+WELCOME_BANNER: str = r"""
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║   ███████╗██╗  ██╗███╗   ███╗                                        ║
+║   ██╔════╝██║  ██║████╗ ████║                                        ║
+║   ███████╗███████║██╔████╔██║                                        ║
+║   ╚════██║██╔══██║██║╚██╔╝██║                                        ║
+║   ███████║██║  ██║██║ ╚═╝ ██║                                        ║
+║   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝                                        ║
+║                                                                      ║
+║   ██╗  ██╗███████╗ █████╗ ██╗  ████████╗██╗  ██╗                    ║
+║   ██║  ██║██╔════╝██╔══██╗██║  ╚══██╔══╝██║  ██║                    ║
+║   ███████║█████╗  ███████║██║     ██║   ███████║                    ║
+║   ██╔══██║██╔══╝  ██╔══██║██║     ██║   ██╔══██║                    ║
+║   ██║  ██║███████╗██║  ██║███████╗██║   ██║  ██║                    ║
+║   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝                    ║
+║                                                                      ║
+║   ███╗   ███╗ ██████╗ ███╗   ██╗██╗████████╗ ██████╗ ██████╗        ║
+║   ████╗ ████║██╔═══██╗████╗  ██║██║╚══██╔══╝██╔═══██╗██╔══██╗       ║
+║   ██╔████╔██║██║   ██║██╔██╗ ██║██║   ██║   ██║   ██║██████╔╝       ║
+║   ██║╚██╔╝██║██║   ██║██║╚██╗██║██║   ██║   ██║   ██║██╔══██╗       ║
+║   ██║ ╚═╝ ██║╚██████╔╝██║ ╚████║██║   ██║   ╚██████╔╝██║  ██║       ║
+║   ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝       ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║   Cybersecurity & System Health Monitoring Platform  v1.0.0          ║
+║   Powered by Python 3.12 • FastAPI • SQLite • psutil                 ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║   Welcome, User! System is ready.                                    ║
+║                                                                      ║
+║   COMMANDS                                                           ║
+║   ──────────────────────────────────────                             ║
+║     start  →  Begin monitoring CPU, RAM, Disk & Network              ║
+║     stop   →  Stop monitoring & save run summary                     ║
+║     exit   →  Quit the program (auto-stops if running)               ║
+║     quit   →  Quit the program (auto-stops if running)               ║
+║                                                                      ║
+║   API available at: http://127.0.0.1:8000/docs                       ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
 """
+
+
+# ---------------------------------------------------------------------------
+# CSV run header stamper
+# ---------------------------------------------------------------------------
+def _stamp_csv_run_header(run_number: int) -> None:
+    """Write a 'Run N' separator header into every CSV file and print it.
+
+    Called once at the start of each monitoring run, before any data rows
+    are written, so it's always clear in the CSV files and terminal output
+    which rows belong to which run.
+
+    The header line is written as a comment row (prefixed with ``#``) so
+    standard CSV parsers that ignore comment lines won't choke on it, while
+    it remains clearly visible when the file is opened in a text editor or
+    spreadsheet.
+
+    Args:
+        run_number: The 1-based run number to display (matches the
+            ``test_run.id`` value assigned by the database).
+    """
+    header_line = f"# {'=' * 60}"
+    run_label   = f"# Data for Run {run_number}  —  started {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    footer_line = f"# {'=' * 60}"
+
+    terminal_msg = (
+        f"\n{'=' * 64}\n"
+        f"  📋  Now recording data for Run {run_number}\n"
+        f"  ⏱   Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"  📁  Writing to: {config.CSV_METRICS_PATH}, "
+        f"{config.CSV_PROCESSES_PATH}, {config.CSV_REPORT_PATH}\n"
+        f"{'=' * 64}\n"
+    )
+
+    csv_files = [
+        config.CSV_METRICS_PATH,
+        config.CSV_PROCESSES_PATH,
+        config.CSV_REPORT_PATH,
+    ]
+
+    for csv_path in csv_files:
+        try:
+            with open(csv_path, mode="a", encoding="utf-8") as f:
+                f.write(f"{header_line}\n")
+                f.write(f"{run_label}\n")
+                f.write(f"{footer_line}\n")
+        except OSError:
+            logger.exception("Failed to write run header to '%s'.", csv_path)
+
+    print(terminal_msg)
+    logger.info("Stamped Run %d header into CSV files.", run_number)
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +306,8 @@ def start_monitoring() -> None:
             print("Failed to start monitoring: could not create a database run record.")
             logger.error("start_monitoring() aborted: insert_test_run() returned -1.")
             return
+
+        _stamp_csv_run_header(_current_run_id)
 
         config.monitoring_active.set()
         _monitoring_thread = threading.Thread(
