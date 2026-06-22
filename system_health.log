@@ -75,3 +75,34 @@
 2026-06-22 13:58:19,407 [INFO] config: Generated run summary: duration=25.25s avg_cpu=10.88% avg_ram=81.67% avg_disk=68.20% alerts=0
 2026-06-22 13:58:19,441 [INFO] database: Updated test_run id=3 with end_time and final alert_count.
 2026-06-22 13:58:19,441 [INFO] __main__: stop_monitoring() completed for run_id=3.
+2026-06-22 14:13:50,444 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-22 14:13:50,446 [INFO] __main__: API server thread launched.
+2026-06-22 14:13:50,549 [INFO] __main__: Starting FastAPI server on http://127.0.0.1:8000
+2026-06-22 14:13:50,638 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-22 14:13:50,639 [INFO] api: API startup complete: database initialized.
+2026-06-22 14:13:56,193 [INFO] database: Inserted test_run row with id=4.
+2026-06-22 14:13:56,202 [INFO] __main__: Stamped Run 4 header into CSV files.
+2026-06-22 14:13:56,206 [INFO] __main__: Monitoring loop started for run_id=4.
+2026-06-22 14:13:56,207 [INFO] __main__: start_monitoring() succeeded; run_id=4.
+2026-06-22 14:13:57,382 [WARNING] config: ALERT triggered for RAM: value=85.20 exceeded threshold=85.00
+2026-06-22 14:13:57,383 [INFO] config: Collected system metrics: CPU=5.3% RAM=85.2% DISK=68.6% NET_SENT=0.000MB NET_RECV=0.000MB
+2026-06-22 14:14:02,228 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:03,275 [INFO] config: Collected system metrics: CPU=10.2% RAM=84.8% DISK=68.6% NET_SENT=0.007MB NET_RECV=0.008MB
+2026-06-22 14:14:08,608 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:09,651 [INFO] config: Collected system metrics: CPU=9.8% RAM=85.0% DISK=68.6% NET_SENT=0.013MB NET_RECV=0.001MB
+2026-06-22 14:14:14,927 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:16,008 [INFO] config: Collected system metrics: CPU=18.7% RAM=83.3% DISK=68.6% NET_SENT=0.034MB NET_RECV=0.013MB
+2026-06-22 14:14:21,131 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:22,176 [INFO] config: Collected system metrics: CPU=10.5% RAM=83.4% DISK=68.6% NET_SENT=0.036MB NET_RECV=0.027MB
+2026-06-22 14:14:27,257 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:28,341 [INFO] config: Collected system metrics: CPU=14.6% RAM=83.3% DISK=68.6% NET_SENT=0.032MB NET_RECV=0.013MB
+2026-06-22 14:14:33,113 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:34,192 [INFO] config: Collected system metrics: CPU=8.8% RAM=83.4% DISK=68.6% NET_SENT=0.006MB NET_RECV=0.001MB
+2026-06-22 14:14:38,461 [WARNING] __main__: start_monitoring() called while monitoring was already active.
+2026-06-22 14:14:39,779 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:40,852 [INFO] config: Collected system metrics: CPU=8.0% RAM=82.8% DISK=68.6% NET_SENT=0.068MB NET_RECV=0.041MB
+2026-06-22 14:14:45,359 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 14:14:45,384 [INFO] __main__: Monitoring loop exited cleanly for run_id=4.
+2026-06-22 14:14:45,385 [INFO] config: Generated run summary: duration=49.22s avg_cpu=10.74% avg_ram=83.90% avg_disk=68.60% alerts=1
+2026-06-22 14:14:45,409 [INFO] database: Updated test_run id=4 with end_time and final alert_count.
+2026-06-22 14:14:45,411 [INFO] __main__: stop_monitoring() completed for run_id=4.
