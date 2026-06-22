@@ -453,6 +453,8 @@ def main() -> None:
         if config.monitoring_active.is_set():
             stop_monitoring()
         print("Thank You for using The System Health Monitor \U0001F600")
+        print("Exitting Gracefully !!!")
+        print("Thank You for using The System Health Monitor ☺️☺️")
 
     except Exception:
         logger.exception("Unhandled exception in main program loop.")
@@ -463,4 +465,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
