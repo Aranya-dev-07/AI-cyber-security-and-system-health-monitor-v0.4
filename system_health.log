@@ -54,3 +54,24 @@
 2026-06-22 09:52:32,920 [INFO] config: Generated run summary: duration=30.52s avg_cpu=14.26% avg_ram=85.44% avg_disk=67.80% alerts=2
 2026-06-22 09:52:32,953 [INFO] database: Updated test_run id=2 with end_time and final alert_count.
 2026-06-22 09:52:32,954 [INFO] __main__: stop_monitoring() completed for run_id=2.
+2026-06-22 13:57:43,027 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-22 13:57:43,032 [INFO] __main__: API server thread launched.
+2026-06-22 13:57:43,162 [INFO] __main__: Starting FastAPI server on http://127.0.0.1:8000
+2026-06-22 13:57:43,301 [INFO] database: Database initialized successfully at 'system_monitor.db'.
+2026-06-22 13:57:43,303 [INFO] api: API startup complete: database initialized.
+2026-06-22 13:57:54,180 [INFO] database: Inserted test_run row with id=3.
+2026-06-22 13:57:54,190 [INFO] __main__: Stamped Run 3 header into CSV files.
+2026-06-22 13:57:54,192 [INFO] __main__: Monitoring loop started for run_id=3.
+2026-06-22 13:57:54,193 [INFO] __main__: start_monitoring() succeeded; run_id=3.
+2026-06-22 13:57:55,217 [INFO] config: Collected system metrics: CPU=5.7% RAM=82.3% DISK=68.2% NET_SENT=0.000MB NET_RECV=0.000MB
+2026-06-22 13:58:00,384 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 13:58:01,456 [INFO] config: Collected system metrics: CPU=9.2% RAM=81.5% DISK=68.2% NET_SENT=0.098MB NET_RECV=3.988MB
+2026-06-22 13:58:07,197 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 13:58:08,268 [INFO] config: Collected system metrics: CPU=16.2% RAM=81.5% DISK=68.2% NET_SENT=0.122MB NET_RECV=4.541MB
+2026-06-22 13:58:13,515 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 13:58:14,586 [INFO] config: Collected system metrics: CPU=12.4% RAM=81.4% DISK=68.2% NET_SENT=0.073MB NET_RECV=2.267MB
+2026-06-22 13:58:19,386 [INFO] config: Collected top 5 processes by CPU usage.
+2026-06-22 13:58:19,405 [INFO] __main__: Monitoring loop exited cleanly for run_id=3.
+2026-06-22 13:58:19,407 [INFO] config: Generated run summary: duration=25.25s avg_cpu=10.88% avg_ram=81.67% avg_disk=68.20% alerts=0
+2026-06-22 13:58:19,441 [INFO] database: Updated test_run id=3 with end_time and final alert_count.
+2026-06-22 13:58:19,441 [INFO] __main__: stop_monitoring() completed for run_id=3.
